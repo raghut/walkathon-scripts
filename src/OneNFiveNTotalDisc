@@ -1,0 +1,97 @@
+function sendDailySlackUpdate() {
+  const SLACK_WEBHOOK_URL = 'Add-webhook-ulr-here';
+  const rawSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Raw_Activities');
+
+ const tz = 'Asia/Kolkata';
+  const now = new Date();
+
+  const end = now;
+  const start = new Date(end.getTime() - (24 * 60 * 60 * 1000)); // 24 hours window
+
+  Logger.log("🕒 Daily Window IST: " +
+    Utilities.formatDate(start, tz, "dd MMM hh:mm a") +
+    " → " +
+    Utilities.formatDate(end, tz, "dd MMM hh:mm a")
+  );
+
+  const data = rawSheet.getDataRange().getValues();
+  Logger.log("📊 Raw Data Rows: " + data.length);
+
+  if (data.length < 2) return;
+
+  const seen = new Set();
+  const todays = [];
+
+ for (let i = 1; i < data.length; i++) {
+    const [ts, name, , distanceKm, , type, link] = data[i];
+    if (!ts || !name) continue;
+    if (!['Walk', 'Run'].includes(type)) continue;
+
+    // const dt = new Date(ts.toString().replace(" ", "T")); // Convert timestamp correctly
+    let dt;
+if (ts instanceof Date) {
+  dt = ts; // Already a valid date object
+} else {
+  let tsStr = ts.toString().trim();
+  
+  if (/^\d{4}-\d{2}-\d{2}$/.test(tsStr)) {
+    tsStr = tsStr + "T00:00:00"; // Add midnight default
+  } else if (tsStr.includes(" ")) {
+    tsStr = tsStr.replace(" ", "T"); // Convert space → T
+  }
+
+  dt = new Date(tsStr);
+
+  if (isNaN(dt.getTime())) {
+    Logger.log(`⚠️ Invalid timestamp encountered: ${ts}`);
+    continue; // Skip this row instead of error
+  }
+}
+
+    // Logger.log(`Row ${i}: Time=${dt.toISOString()}, Name=${name}`);
+
+    if (dt >= start && dt <= end) {
+      if (seen.has(name)) continue;
+      seen.add(name);
+
+      const dist = parseFloat(distanceKm || 0);
+      todays.push({
+        name,
+        type,
+        distText: dist ? ` • ${dist.toFixed(2)} km` : "",
+        link
+      });
+    }
+  }
+
+  Logger.log("✅ Unique Walkers from Yesterday evening: " + todays.length);
+
+  // let text = `:earthbenders: *Earthbenders Daily Roll Call* — ${todayStr}\n`;
+  let text ="";
+
+  if (todays.length === 0) {
+    text += `\n😴 No footprints yet today.\nCome on Earthbenders — quick 1 km still counts! 💪🔥`;
+  } else {
+    text += `\n:earthbenders: ${todays.length} Champions who moved in last 24hrs 💪*:\n`;
+    todays.forEach((t) => {
+      const emoji = t.type === 'Run' ? '🏃‍♂️' : '🚶‍♀️';
+      text += `• ${emoji} *${t.name}*${t.distText}${t.link ? ` — <${t.link}|view>` : ''}\n`;
+    });
+    text += `\n👏 Keep the streak alive! You are moving mountains! 🌋💚`;
+  }
+
+ Logger.log("📩 Sending Slack Notification: " + text);
+  postToSlack(SLACK_WEBHOOK_URL, { text });
+}
+
+/** Helper */
+function postToSlack(webhookUrl, payload) {
+  Logger.log("📩 Sending Slack Notification: " + JSON.stringify(payload));
+  UrlFetchApp.fetch(webhookUrl, {
+    method: 'post',
+    contentType: 'application/json',
+    payload: JSON.stringify(payload),
+    muteHttpExceptions: true
+  });
+  Logger.log("✅ Slack message posted");
+}
