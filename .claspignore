@@ -1,0 +1,12 @@
+# Ignore everything except the src directory
+**/**
+!src/**
+!src/appsscript.json
+
+# Ignore common files
+*.md
+*.txt
+*.log
+.git/**
+.github/**
+node_modules/**
