@@ -1,7 +1,6 @@
 # Ignore everything except the src directory
 **/**
 !src/**
-!src/appsscript.json
 
 # Ignore common files
 *.md
