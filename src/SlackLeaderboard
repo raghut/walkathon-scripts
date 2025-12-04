@@ -1,0 +1,96 @@
+/**************** CONFIG ****************/
+const SLACK_WEBHOOK_URL = "add-webhook-url";
+
+const SHEET_SUMMARY = "Summary";
+
+/************ EB LEADERBOARD ************/
+function sendWeeklyLeaderboardAllSections() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const summarySheet = ss.getSheetByName(SHEET_SUMMARY);
+  const data = summarySheet.getDataRange().getValues();
+
+  if (!data || data.length < 2) {
+    postToSlack(SLACK_WEBHOOK_URL, {
+      text: "📊 No summary data yet — Let’s get walking, Earthbenders! 🌍💪"
+    });
+    return;
+  }
+
+  // Extract stats: [Name, WalkDays, FiveKmDays, TotalDistance]
+  const stats = [];
+  for (let i = 1; i < data.length; i++) {
+    const [name, walkDays, fiveKmDays, totalDist] = data[i];
+    if (!name) continue;
+    stats.push({
+      name: String(name),
+      walkDays: Number(walkDays || 0),
+      fiveKmDays: Number(fiveKmDays || 0),
+      totalDist: Number(totalDist || 0),
+    });
+  }
+
+  if (!stats.length) return;
+
+  // Sorted lists
+  const topWalkers = [...stats].sort((a,b)=>b.walkDays - a.walkDays || b.totalDist - a.totalDist).slice(0, 10);
+  const top5km = [...stats].sort((a,b)=>b.fiveKmDays - a.fiveKmDays || b.totalDist - a.totalDist).slice(0, 5);
+  const topDist = [...stats].sort((a,b)=>b.totalDist - a.totalDist).slice(0, 5);
+
+  const fullSorted = [...stats].sort((a,b)=>b.walkDays - a.walkDays || b.totalDist - a.totalDist);
+
+  // Build message
+  let msg =
+`:earthbenders: *Earthbenders Championship Leaderboard!* :earthbenders:
+
+🔥 *Top 10 – 1Km Walk Days*
+━━━━━━━━━━━━━━━━━━━━
+`;
+
+  topWalkers.forEach((p,i)=>msg+=`${rankEmoji(i)} *${p.name}* — ${p.walkDays} days\n`);
+
+  msg+=
+`\n⚡ *Top 5 – ≥5km Champions*
+━━━━━━━━━━━━━━━━━━━━━━━
+`;
+  top5km.forEach((p,i)=>msg+=`${rankEmoji(i)} *${p.name}* — ${p.fiveKmDays} days\n`);
+
+  msg+=
+`\n🌟 *Top 5 – Total Distance*
+━━━━━━━━━━━━━━━━━━━━━━
+`;
+  topDist.forEach((p,i)=>msg+=`${rankEmoji(i)} *${p.name}* — ${p.totalDist.toFixed(2)} km\n`);
+
+  msg+=
+`\n📋 *Full Leaderboard — Walk Days Sorted*
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+\`\`\`
+#   Name                 Days  ≥5km Dist(km)
+--------------------------------------------
+`;
+
+  fullSorted.forEach((p,i)=> {
+    msg += `${String(i+1).padEnd(3)} ${p.name.padEnd(20)} ${String(p.walkDays).padEnd(5)} ${String(p.fiveKmDays).padEnd(6)} ${p.totalDist.toFixed(2)}\n`;
+  });
+
+  msg +=
+`\`\`\`
+
+💪 Let’s keep bending the earth, champs! 🔥:earthbenders:`;
+
+  postToSlack(SLACK_WEBHOOK_URL, { text: msg });
+}
+
+/**************** Helpers *****************/
+function rankEmoji(i){
+  return ["🥇","🥈","🥉"][i] || `#${i+1}`;
+}
+
+function postToSlack(webhookUrl, payload) {
+  Logger.log(payload);
+  UrlFetchApp.fetch(webhookUrl, {
+    method: "post",
+    contentType: "application/json",
+    payload: JSON.stringify(payload),
+    muteHttpExceptions: true,
+  });
+}

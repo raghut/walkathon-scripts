@@ -1,0 +1,142 @@
+function fetchEarthbendersActivities() {
+  const tokenSheetName = "User_Tokens";
+  const rawSheetName = "Raw_Activities";
+  const clientId = "156624"; // ✅ Replace with your Strava App Client ID
+  const clientSecret = "9610dae4888471fe258ce589a7b2edc14c826251"; // ✅ Replace with your Client Secret
+
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const tokenSheet = ss.getSheetByName(tokenSheetName);
+  const rawSheet = ss.getSheetByName(rawSheetName);
+  const tokenData = tokenSheet.getDataRange().getValues();
+  const now = Math.floor(Date.now() / 1000);
+
+  // ✅ Entire month duration
+  const octoberStart = Math.floor(new Date("2025-12-01T00:00:00Z").getTime() / 1000);
+  const novemberStart = Math.floor(new Date("2025-12-31T23:59:00Z").getTime() / 1000);
+
+  // ✅ Clear Raw_Activities (keep header row)
+  if (rawSheet.getLastRow() > 1) {
+    rawSheet.getRange(2, 1, rawSheet.getLastRow() - 1, 7).clearContent();
+    Logger.log("🧹 Cleared previous Raw_Activities data (monthly re-sync)");
+  }
+
+  for (let i = 1; i < tokenData.length; i++) {
+    const [no, name, stravaId, accessTokOld, refreshTokOld, expiresAtOld] = tokenData[i];
+    let accessToken = accessTokOld;
+    let refreshToken = refreshTokOld;
+    let expiresAt = expiresAtOld;
+
+    Logger.log(`\n🏃 Fetching activities for: ${name}`);
+
+    // ✅ Token Refresh if expired
+    if (now >= expiresAt) {
+      Logger.log("🔄 Refreshing token for " + name);
+
+      const refreshResponse = UrlFetchApp.fetch("https://www.strava.com/api/v3/oauth/token", {
+        method: "post",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        payload: {
+          client_id: clientId,
+          client_secret: clientSecret,
+          grant_type: "refresh_token",
+          refresh_token: refreshToken,
+        },
+        muteHttpExceptions: true
+      });
+
+      if (refreshResponse.getResponseCode() === 200) {
+        const ref = JSON.parse(refreshResponse.getContentText());
+        accessToken = ref.access_token;
+        refreshToken = ref.refresh_token;
+        expiresAt = ref.expires_at;
+
+        tokenSheet.getRange(i + 1, 4).setValue(accessToken);
+        tokenSheet.getRange(i + 1, 5).setValue(refreshToken);
+        tokenSheet.getRange(i + 1, 6).setValue(expiresAt);
+
+        Logger.log("✅ Token refreshed for " + name);
+      } else {
+        Logger.log("❌ Token refresh failed for " + name);
+        continue;
+      }
+    }
+
+    // ✅ Fetch all October Walk/Run activities again
+    const activityUrl =
+      `https://www.strava.com/api/v3/athlete/activities?after=${octoberStart}&before=${novemberStart}&per_page=200&access_token=${accessToken}`;
+
+    try {
+      const response = UrlFetchApp.fetch(activityUrl);
+      const activities = JSON.parse(response.getContentText());
+      const insertRows = [];
+
+      for (const act of activities) {
+        if (!["Walk", "Run"].includes(act.type)) continue;
+        const localDate = act.start_date_local.replace("T", " ").split("Z")[0];
+
+        insertRows.push([
+          localDate,
+          name,
+          act.id,
+          (act.distance / 1000).toFixed(2),
+          (act.moving_time / 60).toFixed(2),
+          act.type,
+          `https://www.strava.com/activities/${act.id}`,
+        ]);
+      }
+
+      if (insertRows.length > 0) {
+        rawSheet.getRange(rawSheet.getLastRow() + 1, 1, insertRows.length, 7).setValues(insertRows);
+        Logger.log(`✅ Inserted ${insertRows.length} new activities for ${name}`);
+      }
+
+    } catch (err) {
+      Logger.log(`❌ Fetch failed for ${name}: ${err.message}`);
+    }
+  }
+
+  updateSummarySheet();
+  Logger.log("📊 Summary updated ✅");
+}
+
+
+/**************** SUMMARY UPDATE ****************/
+
+function updateSummarySheet() {
+  const rawSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Raw_Activities");
+  const summarySheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Summary");
+  const rawData = rawSheet.getDataRange().getValues();
+
+  if (rawData.length < 2) {
+    Logger.log("No activity data found");
+    return;
+  }
+
+  summarySheet.getRange(2, 1, summarySheet.getLastRow(), 4).clearContent();
+
+  const stats = {};
+
+  for (let i = 1; i < rawData.length; i++) {
+    const [date, name, , distKm, , type] = rawData[i];
+    if (!["Walk", "Run"].includes(type)) continue;
+
+    const key = `${name}-${date}`;
+
+    if (!stats[name]) stats[name] = { unique: new Set(), five: new Set(), dist: 0 };
+
+    stats[name].unique.add(key);
+    if (distKm >= 5) stats[name].five.add(key);
+    stats[name].dist += Number(distKm);
+  }
+
+  let row = 2;
+  for (const n in stats) {
+    summarySheet.getRange(row, 1).setValue(n);
+    summarySheet.getRange(row, 2).setValue(stats[n].unique.size);
+    summarySheet.getRange(row, 3).setValue(stats[n].five.size);
+    summarySheet.getRange(row, 4).setValue(stats[n].dist.toFixed(2));
+    row++;
+  }
+
+  Logger.log("✅ Summary ready");
+}
